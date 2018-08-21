@@ -12,11 +12,11 @@ defmodule RedisManager do
   end
 
   def store_item(server, item) do
-    GenServer.call(server, {:store_item, item})
+    GenServer.call(server, {:store_item, item}, 50_000)
   end
 
   def get_item(server, id) do
-    GenServer.call(server, {:get_item, id})
+    GenServer.call(server, {:get_item, id}, 50_000)
   end
 
   def init(:ok) do
@@ -55,6 +55,8 @@ defmodule RedisManager do
     by = item["by"]
     time = item["time"]
     data = Poison.encode!(item)
+
+    # IO.inspect({:store_item, id})
 
     try do
       Redix.command(:redix, [

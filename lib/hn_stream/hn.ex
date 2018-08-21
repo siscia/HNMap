@@ -1,12 +1,53 @@
+defmodule HyperFeeder do
+  use Agent
+
+  def start_link([[lower, upper], opts]) do
+    Agent.start_link(fn -> start_feeders(lower..upper) end)
+  end
+
+  def init({:ok, [lower, upper]}) do
+    start_feeders(lower..upper)
+  end
+
+  def start_feeders(range) do
+    start_feeders(range, 100)
+  end
+
+  def start_feeders(range, n) do
+    chunks = Enum.chunk_every(range, n)
+    start_feeders_chunks(chunks)
+  end
+
+  def start_feeders_chunks([chunk | chunks]) do
+    lower = hd(chunk)
+    upper = List.last(chunk)
+    # spawn(fn -> Feeder.start_link([lower, upper]) end)
+    spawn(fn -> DynamicSupervisor.start_child(DynamicScheduler, {Feeder, [lower, upper]}) end)
+    start_feeders_chunks(chunks)
+  end
+
+  def start_feeders_chunks([]) do
+  end
+end
+
 defmodule Feeder do
   use Agent
 
   def start_link([lower, upper]) do
+    spawn(fn -> spawn_getter(lower, upper) end)
+
     Agent.start_link(fn ->
-      for n <- lower..upper do
-        DynamicSupervisor.start_child(DynamicScheduler, {Get, n})
-      end
+      nil
     end)
+  end
+
+  def spawn_getter(lower, lower) do
+    spawn(fn -> DynamicSupervisor.start_child(DynamicScheduler, {Get, lower}) end)
+  end
+
+  def spawn_getter(lower, upper) do
+    spawn(fn -> DynamicSupervisor.start_child(DynamicScheduler, {Get, lower}) end)
+    spawn_getter(lower + 1, upper)
   end
 end
 
@@ -45,140 +86,25 @@ defmodule HnMap.GetItem do
 end
 
 defmodule Get do
-  use Agent
+  use Task, restart: :transient
 
   def start_link(n) do
-    Agent.start_link(__MODULE__, :get, [n])
+    Task.start_link(__MODULE__, :get, [n])
   end
 
   def get(n) do
-    IO.puts(n)
+    case RedisManager.get_item(:redis_manager, n) do
+      {:ok, :empty} ->
+        item =
+          n
+          |> Integer.to_string()
+          |> HnMap.GetItem.get_item()
+          |> Poison.decode!()
 
-    item =
-      try do
-        n
-        |> Integer.to_string()
-        |> HnMap.GetItem.get_item()
-        |> Poison.decode!()
-      rescue
-        _ -> exit(:retry)
-      end
+        :ok = RedisManager.store_item(:redis_manager, item)
 
-    :ok = RedisManager.store_item(:redis_manager, item)
-  end
-end
-
-defmodule Scheduler do
-  use GenServer
-
-  def start_link([lowerbound, upperbound, total_worker]) do
-    GenServer.start_link(__MODULE__, {:ok, lowerbound, upperbound, total_worker}, [])
-  end
-
-  def spawn_workers([], map, _lowerbound, _upperbound) do
-    map
-  end
-
-  def spawn_workers([i | tail], map, lowerbound, upperbound) do
-    index = Kernel.min(lowerbound + i, upperbound)
-    p = spawn_link(Get, :get, [index])
-    spawn_workers(tail, Map.put(map, p, index), lowerbound, upperbound)
-  end
-
-  def init({:ok, lowerbound, upperbound, total_worker}) do
-    Process.flag(:trap_exit, true)
-
-    in_fligh = spawn_workers(Enum.to_list(0..total_worker), Map.new(), lowerbound, upperbound)
-
-    lowerbound = Kernel.min(lowerbound + total_worker, upperbound)
-
-    {:ok,
-     %{
-       lowerbound: lowerbound,
-       upperbound: upperbound,
-       total_worker: total_worker,
-       in_fligh: in_fligh,
-       errors: Map.new(),
-       to_remove: 0
-     }}
-  end
-
-  def handle_info({:EXIT, from, :normal}, data) do
-    index = Map.get(data.in_fligh, from)
-
-    in_fligh = Map.delete(data.in_fligh, from)
-    data = Map.put(data, :in_fligh, in_fligh)
-
-    lowerbound = data.lowerbound
-
-    cond do
-      lowerbound <= data.upperbound ->
-        p = spawn_link(Get, :get, [lowerbound])
-        in_fligh = Map.put(data.in_fligh, p, lowerbound)
-        lowerbound = lowerbound + 1
-
-        data =
-          data
-          |> Map.put(:in_fligh, in_fligh)
-          |> Map.put(:lowerbound, lowerbound)
-
-        {:noreply, data}
-
-      lowerbound > data.upperbound ->
-        {:noreply, data}
+      {:ok, _} ->
+        nil
     end
-  end
-
-  def handle_info({:EXIT, from, _error}, data) do
-    # get the failed index
-    index = Map.get(data.in_fligh, from)
-    # remove it from the in_fligh map
-    in_fligh = Map.delete(data.in_fligh, from)
-    data = Map.put(data, :in_fligh, in_fligh)
-
-    case Map.get(data.errors, index) do
-      errors when errors > 5 ->
-        # giving up
-        # remove the error count
-        errors = Map.delete(data.errors, index)
-        data = Map.put(data, :errors, errors)
-
-        lowerbound = data.lowerbound
-        upperbound = data.upperbound
-
-        cond do
-          lowerbound <= upperbound ->
-            p = spawn_link(Get, :get, [lowerbound])
-            lowerbound = lowerbound + 1
-            in_fligh = Map.put(data.in_fligh, p, lowerbound)
-
-            data =
-              data
-              |> Map.put(:in_fligh, in_fligh)
-              |> Map.put(:lowerbound, lowerbound)
-
-            {:noreply, data}
-
-          lowerbound > upperbound ->
-            {:noreply, data}
-        end
-
-      errors when errors <= 5 ->
-        # spawn a new worker
-        p = spawn_link(Get, :get, [index])
-        # track again the new actor
-        in_fligh = Map.put(in_fligh, p, index)
-        # incremente the error count
-        errors = Map.put(data.errors, index, errors + 1)
-
-        data = Map.put(data, :errors, errors)
-        data = Map.put(data, :in_fligh, in_fligh)
-
-        {:noreply, data}
-    end
-  end
-
-  def handle_info(message, data) do
-    {:noreply, data}
   end
 end

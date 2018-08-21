@@ -10,9 +10,9 @@ defmodule HnStream.Application do
     children = [
       {Redix, [[], [name: :redix]]},
       {RedisManager, [name: :redis_manager]},
-      # {Scheduler, [17_709_752, 17_809_752, 5000]},
-      {DynamicSupervisor, name: DynamicScheduler, strategy: :one_for_one},
-      {Feeder, [17_708_642, 17_709_752]}
+      {DynamicSupervisor,
+       [name: DynamicScheduler, strategy: :one_for_one, max_restarts: 5_000, max_seconds: 1]},
+      {HyperFeeder, [[10_000_000, 10_100_000], []]}
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
