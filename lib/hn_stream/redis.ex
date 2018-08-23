@@ -59,16 +59,18 @@ defmodule RedisManager do
     # IO.inspect({:store_item, id})
 
     try do
-      Redix.command(:redix, [
-        "REDISQL.EXEC_STATEMENT",
-        @db,
-        "insert_item",
-        id,
-        type,
-        by,
-        time,
-        data
-      ])
+      :poolboy.transaction(:redis_pool, fn p ->
+        Redix.command(p, [
+          "REDISQL.EXEC_STATEMENT",
+          @db,
+          "insert_item",
+          id,
+          type,
+          by,
+          time,
+          data
+        ])
+      end)
     rescue
       e ->
         nil
@@ -78,7 +80,12 @@ defmodule RedisManager do
   end
 
   def handle_call({:get_item, id}, _from, _data) do
-    case Redix.command(:redix, ["REDISQL.QUERY_STATEMENT", @db, "get_item", id]) do
+    result =
+      :poolboy.transaction(:redis_pool, fn pid ->
+        Redix.command(pid, ["REDISQL.QUERY_STATEMENT", @db, "get_item", id])
+      end)
+
+    case result do
       {:ok, ["DONE", 0]} ->
         {:reply, {:ok, :empty}, []}
 

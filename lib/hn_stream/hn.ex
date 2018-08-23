@@ -93,7 +93,12 @@ defmodule Get do
   end
 
   def get(n) do
-    case RedisManager.get_item(:redis_manager, n) do
+    lookup =
+      :poolboy.transaction(:redis_manager_pool, fn p ->
+        RedisManager.get_item(p, n)
+      end)
+
+    case lookup do
       {:ok, :empty} ->
         item =
           n
@@ -101,7 +106,10 @@ defmodule Get do
           |> HnMap.GetItem.get_item()
           |> Poison.decode!()
 
-        :ok = RedisManager.store_item(:redis_manager, item)
+        :ok =
+          :poolboy.transaction(:redis_manager_pool, fn p ->
+            RedisManager.store_item(p, item)
+          end)
 
       {:ok, _} ->
         nil
