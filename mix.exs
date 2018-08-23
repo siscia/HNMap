@@ -24,7 +24,8 @@ defmodule HnStream.MixProject do
     [
       {:redix, ">= 0.7.0"},
       {:httpotion, "~> 3.1.0"},
-      {:poison, "~> 3.1"}
+      {:poison, "~> 3.1"},
+      {:poolboy, "~> 1.5.1"}
     ]
   end
 end
