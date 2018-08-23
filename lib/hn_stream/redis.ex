@@ -12,11 +12,11 @@ defmodule RedisManager do
   end
 
   def store_item(server, item) do
-    GenServer.call(server, {:store_item, item}, 50_000)
+    GenServer.call(server, {:store_item, item})
   end
 
   def get_item(server, id) do
-    GenServer.call(server, {:get_item, id}, 50_000)
+    GenServer.call(server, {:get_item, id})
   end
 
   def init(:ok) do

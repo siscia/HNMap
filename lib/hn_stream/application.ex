@@ -15,8 +15,8 @@ defmodule HnStream.Application do
         [
           {:name, {:local, :redis_pool}},
           {:worker_module, Redix},
-          {:size, 5},
-          {:max_overflow, 20}
+          {:size, 6},
+          {:max_overflow, 30}
         ],
         []
       ),
@@ -36,7 +36,7 @@ defmodule HnStream.Application do
          strategy: :one_for_one,
          max_restarts: 5_000,
          max_seconds: 1,
-         max_children: 1_000
+         max_children: 5_000
        ]},
       {HyperFeeder, [[10_000_000, 10_100_000], []]}
     ]
