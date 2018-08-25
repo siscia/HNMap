@@ -22,7 +22,8 @@ defmodule HnStream.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:redix, ">= 0.7.0"},
+      {:eredis, "~> 1.1"},
+      {:gen_stage, "~> 0.14.0"},
       {:httpotion, "~> 3.1.0"},
       {:poison, "~> 3.1"},
       {:poolboy, "~> 1.5.1"}

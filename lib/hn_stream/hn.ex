@@ -10,7 +10,7 @@ defmodule HyperFeeder do
   end
 
   def start_feeders(range) do
-    start_feeders(range, 100)
+    start_feeders(range, 5_000)
   end
 
   def start_feeders(range, n) do
@@ -23,7 +23,7 @@ defmodule HyperFeeder do
     upper = List.last(chunk)
     # spawn(fn -> Feeder.start_link([lower, upper]) end)
     spawn(fn ->
-      {:ok, _} = DynamicSupervisor.start_child(DynamicScheduler, {Feeder, [lower, upper]})
+      {:ok, _} = DynamicSupervisor.start_child(DynamicFeeder, {Feeder, [lower, upper]})
     end)
 
     start_feeders_chunks(chunks)
@@ -45,23 +45,23 @@ defmodule Feeder do
   end
 
   def spawn_getter(lower, lower) do
-    case DynamicSupervisor.start_child(DynamicScheduler, {Get, {:lookup, lower}}) do
+    case DynamicSupervisor.start_child(DynamicLookup, {Get, {:lookup, lower}}) do
       {:ok, _} ->
         nil
 
       {:error, :max_children} ->
-        :timer.sleep(500)
+        :timer.sleep(1_000)
         spawn_getter(lower, lower)
     end
   end
 
   def spawn_getter(lower, upper) do
-    case DynamicSupervisor.start_child(DynamicScheduler, {Get, {:lookup, lower}}) do
+    case DynamicSupervisor.start_child(DynamicLookup, {Get, {:lookup, lower}}) do
       {:ok, _} ->
         spawn_getter(lower + 1, upper)
 
       {:error, :max_children} ->
-        :timer.sleep(500)
+        :timer.sleep(1_000)
         spawn_getter(lower, upper)
     end
   end
@@ -97,7 +97,15 @@ defmodule HnMap.GetItem do
   def get_item(item_id) do
     url = @root <> item_id <> @leaf
     response = HTTPotion.get(url)
-    response.body
+    # response.body
+
+    case HTTPotion.Response.success?(response) do
+      true ->
+        response.body
+
+      false ->
+        nil
+    end
   end
 end
 
@@ -112,29 +120,26 @@ defmodule Get do
     Task.start_link(__MODULE__, :lookup, [n])
   end
 
-  def lookup(n) do
-    lookup =
-      :poolboy.transaction(:redis_manager_pool, fn p ->
-        RedisManager.get_item(p, n)
-      end)
-
-    case lookup do
-      {:ok, :empty} ->
-        start_getter(n)
-
-      {:ok, _} ->
-        nil
-    end
+  def start_link({:store, content}) do
+    Task.start_link(__MODULE__, :store, [content])
   end
 
-  defp start_getter(n) do
-    case DynamicSupervisor.start_child(DynamicScheduler, {Get, {:get, n}}) do
-      {:ok, _} ->
-        nil
-
-      {:error, :max_children} ->
-        :timer.sleep(500)
+  def lookup(n) do
+    lookup = RedisManager.get_item(n)
+    #    lookup =
+    #      :poolboy.transaction(
+    #        :redis_manager_pool,
+    #        fn p ->
+    #          RedisManager.get_item(p, n)
+    #        end
+    #      )
+    #
+    case lookup do
+      {:ok, :empty, n} ->
         start_getter(n)
+
+      {:ok, _, _} ->
+        nil
     end
   end
 
@@ -143,11 +148,51 @@ defmodule Get do
       n
       |> Integer.to_string()
       |> HnMap.GetItem.get_item()
-      |> Poison.decode!()
 
-    :ok =
-      :poolboy.transaction(:redis_manager_pool, fn p ->
-        RedisManager.store_item(p, item)
-      end)
+    case item do
+      nil ->
+        nil
+
+      item ->
+        item
+        |> Poison.decode!()
+        |> start_store()
+    end
+  end
+
+  def store(nil) do
+    :ok
+  end
+
+  def store(content) do
+    # IO.inspect({:active_storer, DynamicSupervisor.count_children(DynamicStorer)})
+    :ok = RedisManager.store_item(content)
+
+    #    :ok =
+    #      :poolboy.transaction(
+    #        :redis_manager_pool,
+    #        fn p ->
+    #          RedisManager.store_item(p, content)
+    #        end
+    #      )
+  end
+
+  defp start_next_stage(scheduler, function, param) do
+    case DynamicSupervisor.start_child(scheduler, {Get, {function, param}}) do
+      {:ok, _} ->
+        nil
+
+      {:error, :max_children} ->
+        :timer.sleep(500)
+        start_next_stage(scheduler, function, param)
+    end
+  end
+
+  defp start_getter(n) do
+    start_next_stage(DynamicGetter, :get, n)
+  end
+
+  defp start_store(content) do
+    start_next_stage(DynamicStorer, :store, content)
   end
 end
