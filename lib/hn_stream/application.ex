@@ -8,47 +8,55 @@ defmodule HnStream.Application do
   def start(_type, _args) do
     # List all child processes to be supervised
     children = [
-      {RedisManager, [name: :redis_manager]},
-      :poolboy.child_spec(
-        :redis_read_pool,
-        [
-          {:name, {:local, :redis_read_pool}},
-          {:worker_module, :eredis},
-          {:size, 100},
-          {:max_overflow, 300}
-        ],
-        [{:host, '51.15.142.13'}]
+      Supervisor.child_spec({RedisManager2, [name: :redis_manager_write]},
+        id: :redis_manager_write
       ),
-      :poolboy.child_spec(
-        :redis_write_pool,
-        [
-          {:name, {:local, :redis_write_pool}},
-          {:worker_module, :eredis},
-          {:size, 50},
-          {:max_overflow, 30}
-        ],
-        [{:host, '51.15.142.13'}]
-      ),
-      :poolboy.child_spec(
-        :redis_manager_write_pool,
-        [
-          {:name, {:local, :redis_manager_write_pool}},
-          {:worker_module, RedisManager},
-          {:size, 500},
-          {:max_overflow, 100}
-        ],
-        []
-      ),
-      :poolboy.child_spec(
-        :redis_manager_read_pool,
-        [
-          {:name, {:local, :redis_manager_read_pool}},
-          {:worker_module, RedisManager},
-          {:size, 50},
-          {:max_overflow, 100}
-        ],
-        []
-      ),
+      Supervisor.child_spec({RedisManager2, [name: :redis_manager_read]}, id: :redis_manager_read),
+
+      #     {RedisManager, [name: :redis_manager]},
+      #     :poolboy.child_spec(
+      #       :redis_read_pool,
+      #       [
+      #         {:name, {:local, :redis_read_pool}},
+      #         {:worker_module, :eredis},
+      #         {:size, 100},
+      #         {:max_overflow, 300}
+      #       ],
+      #       # [{:host, '51.15.142.13'}]
+      #       [{:host, 'localhost'}]
+      #     ),
+      #     :poolboy.child_spec(
+      #       :redis_write_pool,
+      #       [
+      #         {:name, {:local, :redis_write_pool}},
+      #         {:worker_module, :eredis},
+      #         {:size, 50},
+      #         {:max_overflow, 30}
+      #       ],
+      #       # [{:host, '51.15.142.13'}]
+      #       [{:host, 'localhost'}]
+      #     ),
+      #     :poolboy.child_spec(
+      #       :redis_manager_write_pool,
+      #       [
+      #         {:name, {:local, :redis_manager_write_pool}},
+      #         {:worker_module, RedisManager},
+      #         {:size, 500},
+      #         {:max_overflow, 100}
+      #       ],
+      #       []
+      #     ),
+      #     :poolboy.child_spec(
+      #       :redis_manager_read_pool,
+      #       [
+      #         {:name, {:local, :redis_manager_read_pool}},
+      #         {:worker_module, RedisManager},
+      #         {:size, 50},
+      #         {:max_overflow, 100}
+      #       ],
+      #       []
+      #     ),
+
       {DynamicSupervisor,
        [
          name: DynamicFeeder,
@@ -62,7 +70,7 @@ defmodule HnStream.Application do
          strategy: :one_for_one,
          max_restarts: 5_000,
          max_seconds: 1,
-         max_children: 10_000
+         max_children: 5_000
        ]},
       {DynamicSupervisor,
        [
@@ -70,7 +78,7 @@ defmodule HnStream.Application do
          strategy: :one_for_one,
          max_restarts: 5_000,
          max_seconds: 1,
-         max_children: 10_000
+         max_children: 5_000
        ]},
       {DynamicSupervisor,
        [
@@ -84,14 +92,23 @@ defmodule HnStream.Application do
       {Stage.Lookup, [name: :lookup]},
       {Stage.Fetch, [name: :fetch]},
       {Stage.Store, [name: :store]},
-      {HyperFeeder, [[10_000_000, 10_100_000], []]}
+      {HyperFeeder, [[0, 10_000_000], []]}
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: HnStream.Supervisor]
-    {:ok, p} = :eredis.start_link([{:host, '51.15.142.13'}])
+    {:ok, p} = :eredis.start_link([{:host, 'localhost'}])
     Process.register(p, :eredis)
     Supervisor.start_link(children, opts)
+  end
+end
+
+defmodule Look do
+  def all do
+    IO.inspect({:feeder, DynamicSupervisor.count_children(DynamicFeeder)})
+    IO.inspect({:lookup, DynamicSupervisor.count_children(DynamicLookup)})
+    IO.inspect({:getter, DynamicSupervisor.count_children(DynamicGetter)})
+    IO.inspect({:storer, DynamicSupervisor.count_children(DynamicStorer)})
   end
 end

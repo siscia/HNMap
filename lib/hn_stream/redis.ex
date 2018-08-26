@@ -12,31 +12,45 @@ defmodule RedisManager do
   end
 
   def store_item(item) do
-    case :poolboy.status(:redis_manager_write_pool) do
-      {:full, _, _, _} ->
-        IO.inspect({:redis_manager_write_pool, :poolboy.status(:redis_manager_write_pool)})
-
-      _ ->
-        nil
-    end
-
-    :poolboy.transaction(:redis_manager_write_pool, fn p ->
-      GenServer.call(p, {:store_item, item})
-    end)
+    GenServer.call(:redis_manager_write, {:store_item, item})
+    #    case :poolboy.status(:redis_manager_write_pool) do
+    #      {:full, _, _, _} ->
+    #        IO.inspect({:redis_manager_write_pool, :poolboy.status(:redis_manager_write_pool)})
+    #
+    #      _ ->
+    #        nil
+    #    end
+    #
+    #    :poolboy.transaction(:redis_manager_write_pool, fn p ->
+    #      GenServer.call(p, {:store_item, item})
+    #    end)
   end
 
   def get_item(id) do
-    case :poolboy.status(:redis_manager_read_pool) do
-      {:full, _, _, _} ->
-        IO.inspect({:redis_manager_read_pool, :poolboy.status(:redis_manager_read_pool)})
+    result = GenServer.call(:redis_manager_write, {:get_item, id})
+
+    case result do
+      {:ok, ["DONE", "0"]} ->
+        {:ok, :empty, id}
+
+      {:ok, item} ->
+        {:ok, item, id}
 
       _ ->
-        nil
+        result
     end
 
-    :poolboy.transaction(:redis_manager_read_pool, fn p ->
-      GenServer.call(p, {:get_item, id})
-    end)
+    #    case :poolboy.status(:redis_manager_read_pool) do
+    #      {:full, _, _, _} ->
+    #        IO.inspect({:redis_manager_read_pool, :poolboy.status(:redis_manager_read_pool)})
+    #
+    #      _ ->
+    #        nil
+    #    end
+    #
+    #    :poolboy.transaction(:redis_manager_read_pool, fn p ->
+    #      GenServer.call(p, {:get_item, id})
+    #    end)
   end
 
   def init(:ok) do

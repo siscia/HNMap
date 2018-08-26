@@ -10,7 +10,7 @@ defmodule HyperFeeder do
   end
 
   def start_feeders(range) do
-    start_feeders(range, 5_000)
+    start_feeders(range, 1_000)
   end
 
   def start_feeders(range, n) do
@@ -126,19 +126,12 @@ defmodule Get do
 
   def lookup(n) do
     lookup = RedisManager.get_item(n)
-    #    lookup =
-    #      :poolboy.transaction(
-    #        :redis_manager_pool,
-    #        fn p ->
-    #          RedisManager.get_item(p, n)
-    #        end
-    #      )
-    #
+
     case lookup do
       {:ok, :empty, n} ->
         start_getter(n)
 
-      {:ok, _, _} ->
+      {:ok, _, _n} ->
         nil
     end
   end
@@ -151,7 +144,7 @@ defmodule Get do
 
     case item do
       nil ->
-        nil
+        start_getter(n)
 
       item ->
         item
@@ -166,25 +159,34 @@ defmodule Get do
 
   def store(content) do
     # IO.inspect({:active_storer, DynamicSupervisor.count_children(DynamicStorer)})
-    :ok = RedisManager.store_item(content)
+    case RedisManager.store_item(content) do
+      {:ok, _} ->
+        nil
 
-    #    :ok =
-    #      :poolboy.transaction(
-    #        :redis_manager_pool,
-    #        fn p ->
-    #          RedisManager.store_item(p, content)
-    #        end
-    #      )
+      {:error, "UNIQUE constraint failed: items.id"} ->
+        nil
+    end
   end
 
   defp start_next_stage(scheduler, function, param) do
+    start_next_stage(scheduler, function, param, 500)
+  end
+
+  defp start_next_stage(scheduler, function, param, backoff) do
     case DynamicSupervisor.start_child(scheduler, {Get, {function, param}}) do
       {:ok, _} ->
         nil
 
       {:error, :max_children} ->
-        :timer.sleep(500)
-        start_next_stage(scheduler, function, param)
+        _ =
+          spawn(fn ->
+            # max 1 minutes
+            backoff = min(backoff * 2, 60 * 1_000 * 1)
+            :ok = :timer.sleep(backoff)
+            start_next_stage(scheduler, function, param, backoff)
+          end)
+
+        nil
     end
   end
 
